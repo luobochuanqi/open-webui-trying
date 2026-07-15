@@ -1505,6 +1505,19 @@ except json.JSONDecodeError:
 
 IMAGES_EDIT_COMFYUI_WORKFLOW_NODES = images_edit_comfyui_workflow_nodes
 
+SEEDREAM_API_KEY = os.getenv('SEEDREAM_API_KEY', '')
+SEEDREAM_MODEL = os.getenv('SEEDREAM_MODEL', 'doubao-seedream-5-0-260128')
+
+SEEDREAM_BASE_URL = os.getenv(
+    'SEEDREAM_BASE_URL', 'https://ark.cn-beijing.volces.com/api/v3'
+)
+
+SEEDREAM_SIZE = os.getenv('SEEDREAM_SIZE', '1K')
+
+# Quota defaults
+QUOTA_DEFAULT_DAILY_TOKEN_BUDGET_RMB = float(os.getenv('QUOTA_DEFAULT_DAILY_TOKEN_BUDGET_RMB', '1.0'))
+QUOTA_DEFAULT_DAILY_IMAGE_LIMIT = int(os.getenv('QUOTA_DEFAULT_DAILY_IMAGE_LIMIT', '10'))
+
 ####################################
 # Audio
 ####################################
@@ -2964,6 +2977,12 @@ DEFAULT_CONFIG = {
     'images.edit.comfyui.api_key': IMAGES_EDIT_COMFYUI_API_KEY,
     'images.edit.comfyui.workflow': IMAGES_EDIT_COMFYUI_WORKFLOW,
     'images.edit.comfyui.nodes': IMAGES_EDIT_COMFYUI_WORKFLOW_NODES,
+    'image_generation.seedream.api_key': SEEDREAM_API_KEY,
+    'image_generation.seedream.model': SEEDREAM_MODEL,
+    'image_generation.seedream.base_url': SEEDREAM_BASE_URL,
+    'image_generation.seedream.size': SEEDREAM_SIZE,
+    'quota.daily_token_budget_rmb': QUOTA_DEFAULT_DAILY_TOKEN_BUDGET_RMB,
+    'quota.daily_image_limit': QUOTA_DEFAULT_DAILY_IMAGE_LIMIT,
     'audio.stt.whisper_model': WHISPER_MODEL,
     'audio.stt.deepgram.api_key': DEEPGRAM_API_KEY,
     'audio.stt.openai.api_base_url': AUDIO_STT_OPENAI_API_BASE_URL,
