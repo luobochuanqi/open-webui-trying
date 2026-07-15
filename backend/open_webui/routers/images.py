@@ -43,6 +43,11 @@ from open_webui.utils.images.comfyui import (
     comfyui_upload_image,
 )
 from open_webui.utils.session_pool import get_session
+from open_webui.utils.image_gen.seedream import seedream_generate, seedream_models
+from open_webui.utils.quota import (
+    check_image_quota,
+    IMAGE_QUOTA_EXCEEDED,
+)
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -97,6 +102,11 @@ IMAGE_CONFIG_KEYS = {
     'IMAGES_EDIT_COMFYUI_API_KEY': 'images.edit.comfyui.api_key',
     'IMAGES_EDIT_COMFYUI_WORKFLOW': 'images.edit.comfyui.workflow',
     'IMAGES_EDIT_COMFYUI_WORKFLOW_NODES': 'images.edit.comfyui.nodes',
+    'SEEDREAM_API_KEY': 'image_generation.seedream.api_key',
+    'SEEDREAM_MODEL': 'image_generation.seedream.model',
+    'SEEDREAM_BASE_URL': 'image_generation.seedream.base_url',
+    'SEEDREAM_SIZE': 'image_generation.seedream.size',
+    'QUOTA_DAILY_IMAGE_LIMIT': 'quota.daily_image_limit',
     'USER_PERMISSIONS': 'user.permissions',
 }
 
@@ -222,6 +232,8 @@ async def get_image_model(request):
                 status_code=400,
                 detail=ERROR_MESSAGES.DEFAULT(e, 'Failed to connect to the image generation engine'),
             )
+    elif image_config.IMAGE_GENERATION_ENGINE == 'seedream':
+        return image_config.SEEDREAM_MODEL if image_config.SEEDREAM_MODEL else 'doubao-seedream-5-0-260128'
 
 
 class ImagesConfig(BaseModel):
@@ -265,6 +277,12 @@ class ImagesConfig(BaseModel):
     IMAGES_EDIT_COMFYUI_API_KEY: str
     IMAGES_EDIT_COMFYUI_WORKFLOW: str
     IMAGES_EDIT_COMFYUI_WORKFLOW_NODES: list[dict]
+
+    SEEDREAM_API_KEY: str
+    SEEDREAM_MODEL: str
+    SEEDREAM_BASE_URL: str
+    SEEDREAM_SIZE: str
+    QUOTA_DAILY_IMAGE_LIMIT: int
 
 
 @router.get('/config', response_model=ImagesConfig)
@@ -434,6 +452,8 @@ async def get_models(request: Request, user=Depends(get_verified_user)):
                     models,
                 )
             )
+        elif image_config.IMAGE_GENERATION_ENGINE == 'seedream':
+            return await seedream_models()
     except Exception as e:
         log.exception(f'Failed to list image generation models: {e}')
         raise HTTPException(
@@ -570,6 +590,14 @@ async def generate_images(request: Request, form_data: CreateImageForm, user=Dep
             status_code=403,
             detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
         )
+
+    if user.role != 'admin':
+        is_exceeded, current, limit = await check_image_quota(user.id)
+        if is_exceeded:
+            raise HTTPException(
+                status_code=429,
+                detail=IMAGE_QUOTA_EXCEEDED.format(current=current, limit=limit),
+            )
 
     result = await image_generations(request, form_data, user=user)
     await publish_event(
@@ -780,6 +808,27 @@ async def image_generations(
                     image_data,
                     content_type,
                     {**form_data.model_dump(exclude_none=True), **metadata},
+                    user,
+                )
+                images.append({'url': url})
+            return images
+        elif image_config.IMAGE_GENERATION_ENGINE == 'seedream':
+            images = []
+            results = await seedream_generate(
+                prompt=form_data.prompt,
+                n=form_data.n,
+                size=size,
+                api_key=image_config.SEEDREAM_API_KEY,
+                model=form_data.model or image_config.SEEDREAM_MODEL,
+                base_url=image_config.SEEDREAM_BASE_URL,
+            )
+            for item in results:
+                image_data, content_type = await get_image_data(item['url'])
+                _, url = await upload_image(
+                    request,
+                    image_data,
+                    content_type,
+                    {**metadata, 'prompt': form_data.prompt, 'revised_prompt': item.get('revised_prompt', '')},
                     user,
                 )
                 images.append({'url': url})
@@ -1184,3 +1233,121 @@ async def image_edits(
             error = e.message
 
         raise HTTPException(status_code=400, detail=ERROR_MESSAGES.DEFAULT(error))
+
+
+class GalleryItem(BaseModel):
+    id: str
+    url: str
+    user_id: str
+    user_name: str
+    filename: str
+    created_at: str
+    featured: bool = False
+
+
+@router.get('/gallery', response_model=list[GalleryItem])
+async def get_gallery(
+    request: Request,
+    offset: int = 0,
+    limit: int = 50,
+    user=Depends(get_admin_user),
+):
+    async with get_async_db_context() as db:
+        from sqlalchemy import desc, select
+
+        from open_webui.models.files import File
+
+        result = await db.execute(
+            select(File)
+            .where(File.filename.like('generated-image%'))
+            .order_by(desc(File.created_at))
+            .offset(offset)
+            .limit(limit)
+        )
+        files = result.scalars().all()
+
+    from open_webui.models.config import Config
+
+    featured_ids = await Config.get('showcase.featured_ids', []) or []
+
+    items = []
+    for f in files:
+        from open_webui.models.users import Users
+
+        user_info = await Users.get_user_by_id(f.user_id)
+        user_name = user_info.name if user_info else 'unknown'
+
+        items.append(
+            GalleryItem(
+                id=f.id,
+                url=request.app.url_path_for('get_file_content_by_id', id=f.id),
+                user_id=f.user_id,
+                user_name=user_name,
+                filename=f.filename,
+                created_at=str(f.created_at),
+                featured=f.id in featured_ids,
+            )
+        )
+    return items
+
+
+@router.get('/showcase', response_model=list[GalleryItem])
+async def get_showcase(request: Request, offset: int = 0, limit: int = 50):
+    from open_webui.models.config import Config
+
+    featured_ids = await Config.get('showcase.featured_ids', []) or []
+    if not featured_ids:
+        return []
+
+    async with get_async_db_context() as db:
+        from sqlalchemy import select
+
+        from open_webui.models.files import File
+
+        result = await db.execute(
+            select(File)
+            .where(File.id.in_(featured_ids))
+            .order_by(File.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        files = result.scalars().all()
+
+    items = []
+    for f in files:
+        from open_webui.models.users import Users
+
+        user_info = await Users.get_user_by_id(f.user_id)
+        user_name = user_info.name if user_info else 'unknown'
+
+        items.append(
+            GalleryItem(
+                id=f.id,
+                url=request.app.url_path_for('get_file_content_by_id', id=f.id),
+                user_id=f.user_id,
+                user_name=user_name,
+                filename=f.filename,
+                created_at=str(f.created_at),
+                featured=True,
+            )
+        )
+    return items
+
+
+class FeatureForm(BaseModel):
+    file_id: str
+
+
+@router.post('/gallery/feature')
+async def toggle_feature(form_data: FeatureForm, user=Depends(get_admin_user)):
+    from open_webui.models.config import Config
+
+    featured_ids = await Config.get('showcase.featured_ids', []) or []
+
+    if form_data.file_id in featured_ids:
+        featured_ids.remove(form_data.file_id)
+    else:
+        featured_ids.append(form_data.file_id)
+
+    await Config.upsert({'showcase.featured_ids': featured_ids})
+    return {'featured_ids': featured_ids}
