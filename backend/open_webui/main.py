@@ -1014,6 +1014,16 @@ async def chat_completion(
     if not request.app.state.MODELS:
         await get_all_models(request, user=user)
 
+    if user.role != 'admin':
+        from open_webui.utils.quota import TOKEN_QUOTA_EXCEEDED, check_token_quota
+
+        is_exceeded, current_cost, budget = await check_token_quota(user.id)
+        if is_exceeded:
+            raise HTTPException(
+                status_code=429,
+                detail=TOKEN_QUOTA_EXCEEDED.format(current=current_cost, limit=budget),
+            )
+
     model_id = form_data.get('model', None)
     model_item = form_data.pop('model_item', {})
     tasks = form_data.pop('background_tasks', None)
