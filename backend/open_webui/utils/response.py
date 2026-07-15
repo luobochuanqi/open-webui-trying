@@ -57,6 +57,8 @@ USAGE_TOKEN_KEYS = {
     'total_tokens',
     'prompt_tokens',
     'completion_tokens',
+    'prompt_cache_hit_tokens',
+    'prompt_cache_miss_tokens',
 }
 
 USAGE_COST_KEYS = {
