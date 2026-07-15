@@ -288,3 +288,65 @@ export const imageEdits = async (
 
 	return res;
 };
+
+export const getGallery = async (token: string = '', offset = 0, limit = 50) => {
+	let error = null;
+	const res = await fetch(`${IMAGES_API_BASE_URL}/gallery?offset=${offset}&limit=${limit}`, {
+		method: 'GET',
+		headers: {
+			Accept: 'application/json',
+			...(token && { authorization: `Bearer ${token}` })
+		}
+	})
+		.then(async (r) => {
+			if (!r.ok) throw await r.json();
+			return r.json();
+		})
+		.catch((err) => {
+			error = err.detail || 'Server connection failed';
+			return null;
+		});
+	if (error) throw error;
+	return res;
+};
+
+export const getShowcase = async (offset = 0, limit = 50) => {
+	let error = null;
+	const res = await fetch(`${IMAGES_API_BASE_URL}/showcase?offset=${offset}&limit=${limit}`, {
+		method: 'GET',
+		headers: { Accept: 'application/json' }
+	})
+		.then(async (r) => {
+			if (!r.ok) throw await r.json();
+			return r.json();
+		})
+		.catch((err) => {
+			error = err.detail || 'Server connection failed';
+			return null;
+		});
+	if (error) throw error;
+	return res;
+};
+
+export const toggleFeature = async (token: string = '', fileId: string) => {
+	let error = null;
+	const res = await fetch(`${IMAGES_API_BASE_URL}/gallery/feature`, {
+		method: 'POST',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			...(token && { authorization: `Bearer ${token}` })
+		},
+		body: JSON.stringify({ file_id: fileId })
+	})
+		.then(async (r) => {
+			if (!r.ok) throw await r.json();
+			return r.json();
+		})
+		.catch((err) => {
+			error = err.detail || 'Server connection failed';
+			return null;
+		});
+	if (error) throw error;
+	return res;
+};
